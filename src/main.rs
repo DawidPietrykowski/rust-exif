@@ -6,43 +6,6 @@ use std::{fs, io};
 
 const ALLOWED_EXTENSIONS: [&str; 6] = ["heic", "jpg", "jpeg", "png", "arw", "dng"];
 
-fn visit_dirs(
-    dir: &Path,
-    paths: &mut Vec<PathBuf>,
-    depth: i32,
-    excluded_paths: Vec<String>,
-) -> io::Result<()> {
-    if dir.is_dir() {
-        for entry in fs::read_dir(dir)? {
-            let entry = entry?;
-            let path = entry.path();
-            if path.is_dir() {
-                let dir_name = path
-                    .as_path()
-                    .file_name()
-                    .expect("Could not get relative path")
-                    .to_str()
-                    .unwrap();
-                if (depth != 0 || filter_string(dir_name, excluded_paths.clone()))
-                    && !dir_name.starts_with(".")
-                {
-                    // filter
-                    if depth == 0 {
-                        println!("Including {dir_name}");
-                    }
-                    visit_dirs(&path, paths, depth + 1, excluded_paths.clone())?;
-                }
-            } else {
-                let path_buf = entry.path();
-                if is_image(&path_buf) {
-                    paths.push(path_buf);
-                }
-            }
-        }
-    }
-    Ok(())
-}
-
 #[derive(Parser)]
 struct Cli {
     #[command(subcommand)]
@@ -62,6 +25,12 @@ struct Cli {
 
     #[arg(short = 's', long)]
     src: std::path::PathBuf,
+
+    #[arg(short = 'e', long)]
+    exclude: Vec<String>,
+
+    #[arg(short = 'f', long, default_value_t = false)]
+    flip_exclusion: bool,
 }
 
 #[derive(Subcommand)]
@@ -84,7 +53,6 @@ fn main() {
 
     let search_path = cli.src;
     let output_path: PathBuf = cli.dest;
-    let excluded_dirs: Vec<String> = Vec::new();
 
     assert!(search_path.is_dir(), "Source path must be a directory");
 
@@ -95,8 +63,14 @@ fn main() {
     }
 
     let mut all_paths: Vec<PathBuf> = Vec::new();
-    visit_dirs(search_path.as_ref(), &mut all_paths, 0, excluded_dirs)
-        .expect("Failed to iterate over directories");
+    visit_dirs(
+        search_path.as_ref(),
+        &mut all_paths,
+        0,
+        cli.exclude,
+        cli.flip_exclusion,
+    )
+    .expect("Failed to iterate over directories");
 
     for path in all_paths {
         let relative_path = path
@@ -161,6 +135,52 @@ fn main() {
             // }
         }
     }
+}
+
+fn visit_dirs(
+    dir: &Path,
+    paths: &mut Vec<PathBuf>,
+    depth: i32,
+    excluded_paths: Vec<String>,
+    flip_exclusion: bool,
+) -> io::Result<()> {
+    if dir.is_dir() {
+        for entry in fs::read_dir(dir)? {
+            let entry = entry?;
+            let path = entry.path();
+            if path.is_dir() {
+                let dir_name = path
+                    .as_path()
+                    .file_name()
+                    .expect("Could not get relative path")
+                    .to_str()
+                    .unwrap();
+                let mut filter_res = filter_string(dir_name, excluded_paths.clone());
+                if flip_exclusion {
+                    filter_res = !filter_res;
+                }
+                if (depth != 0 || filter_res) && !dir_name.starts_with(".") {
+                    // filter
+                    if depth == 0 {
+                        println!("Including {dir_name}");
+                    }
+                    visit_dirs(
+                        &path,
+                        paths,
+                        depth + 1,
+                        excluded_paths.clone(),
+                        flip_exclusion,
+                    )?;
+                }
+            } else {
+                let path_buf = entry.path();
+                if is_image(&path_buf) {
+                    paths.push(path_buf);
+                }
+            }
+        }
+    }
+    Ok(())
 }
 
 fn filter_string(string: &str, excluded_paths: Vec<String>) -> bool {
