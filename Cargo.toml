@@ -4,5 +4,6 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
+clap = { version = "4.4.4", features = ["derive"] }
 kamadak-exif = "0.5.5"
 rexiv2 = "0.10.0"
