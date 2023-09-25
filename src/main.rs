@@ -1,3 +1,4 @@
+use clap::{Parser, Subcommand};
 use rexiv2::Metadata;
 use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
@@ -5,37 +6,11 @@ use std::{fs, io};
 
 const ALLOWED_EXTENSIONS: [&str; 6] = ["heic", "jpg", "jpeg", "png", "arw", "dng"];
 
-fn is_image(filename: &PathBuf) -> bool {
-    if filename
-        .file_name()
-        .unwrap()
-        .to_str()
-        .unwrap()
-        .starts_with(".")
-    {
-        return false;
-    }
-
-    let ext = filename
-        .extension()
-        .unwrap_or(OsStr::new(""))
-        .to_str()
-        .unwrap();
-    let lower_passed = ext.to_lowercase();
-    for allowed_extension in ALLOWED_EXTENSIONS {
-        let lower_allowed = allowed_extension.to_lowercase();
-        if lower_allowed == lower_passed {
-            return true;
-        }
-    }
-    false
-}
-
 fn visit_dirs(
     dir: &Path,
     paths: &mut Vec<PathBuf>,
     depth: i32,
-    x: fn(&str) -> bool,
+    excluded_paths: Vec<String>,
 ) -> io::Result<()> {
     if dir.is_dir() {
         for entry in fs::read_dir(dir)? {
@@ -48,12 +23,14 @@ fn visit_dirs(
                     .expect("Could not get relative path")
                     .to_str()
                     .unwrap();
-                if (depth != 0 || x(dir_name)) && !dir_name.starts_with(".") {
+                if (depth != 0 || filter_string(dir_name, excluded_paths.clone()))
+                    && !dir_name.starts_with(".")
+                {
                     // filter
                     if depth == 0 {
-                        println!("Passed {dir_name}");
+                        println!("Including {dir_name}");
                     }
-                    visit_dirs(&path, paths, depth + 1, x)?;
+                    visit_dirs(&path, paths, depth + 1, excluded_paths.clone())?;
                 }
             } else {
                 let path_buf = entry.path();
@@ -65,17 +42,6 @@ fn visit_dirs(
     }
     Ok(())
 }
-
-fn filter_string(string: &str, excluded_paths: Vec<String>) -> bool {
-    for path in excluded_paths {
-        if string.contains(path.as_str()) {
-            return false;
-        }
-    }
-    true
-}
-
-use clap::{Parser, Subcommand};
 
 #[derive(Parser)]
 struct Cli {
@@ -118,6 +84,7 @@ fn main() {
 
     let search_path = cli.src;
     let output_path: PathBuf = cli.dest;
+    let excluded_dirs: Vec<String> = Vec::new();
 
     assert!(search_path.is_dir(), "Source path must be a directory");
 
@@ -128,7 +95,7 @@ fn main() {
     }
 
     let mut all_paths: Vec<PathBuf> = Vec::new();
-    visit_dirs(search_path.as_ref(), &mut all_paths, 1, |_| true)
+    visit_dirs(search_path.as_ref(), &mut all_paths, 0, excluded_dirs)
         .expect("Failed to iterate over directories");
 
     for path in all_paths {
@@ -169,6 +136,8 @@ fn main() {
                         fs::remove_file(path).unwrap();
                     }
                 }
+            } else if cli.verbose {
+                println!("Skipping {new_file_path:?} as it already exists");
             }
             // if !path.as_os_str().to_str().unwrap().contains("HEIC") {
             //     let jpg_suffix = match path.as_os_str().to_str().unwrap().contains(".JPG") {
@@ -194,7 +163,16 @@ fn main() {
     }
 }
 
-pub fn path_exists(path: PathBuf) -> bool {
+fn filter_string(string: &str, excluded_paths: Vec<String>) -> bool {
+    for path in excluded_paths {
+        if string.contains(&path) {
+            return false;
+        }
+    }
+    true
+}
+
+fn path_exists(path: PathBuf) -> bool {
     fs::metadata(path).is_ok()
 }
 
@@ -211,4 +189,24 @@ fn get_rating(filename: PathBuf) -> Result<i32, String> {
         }
         Err(e) => Err(e.to_string()),
     }
+}
+
+fn is_image(filename: &PathBuf) -> bool {
+    if filename.starts_with(".") {
+        return false;
+    }
+
+    let ext = filename
+        .extension()
+        .unwrap_or(OsStr::new(""))
+        .to_str()
+        .unwrap();
+    let lower_passed = ext.to_lowercase();
+    for allowed_extension in ALLOWED_EXTENSIONS {
+        let lower_allowed = allowed_extension.to_lowercase();
+        if lower_allowed == lower_passed {
+            return true;
+        }
+    }
+    false
 }
