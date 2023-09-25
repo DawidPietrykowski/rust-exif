@@ -1,0 +1,8 @@
+[package]
+name = "rust_exif"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+kamadak-exif = "0.5.5"
+rexiv2 = "0.10.0"

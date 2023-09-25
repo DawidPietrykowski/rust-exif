@@ -1,0 +1,6 @@
+-m --move-matching
+-c --copy-matching
+-i --inverse
+-s --src
+-d --dest
+-v --verbose
