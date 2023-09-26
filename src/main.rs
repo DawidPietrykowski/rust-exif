@@ -38,6 +38,7 @@ enum FileCommand {
     Move,
     Copy,
     Delete,
+    Print,
 }
 
 fn main() {
@@ -49,6 +50,7 @@ fn main() {
         FileCommand::Move => "Moving",
         FileCommand::Copy => "Copying",
         FileCommand::Delete => "Deleting",
+        FileCommand::Print => "Printing",
     };
 
     let search_path = cli.src;
@@ -108,6 +110,10 @@ fn main() {
                     }
                     FileCommand::Delete => {
                         fs::remove_file(path).unwrap();
+                    }
+                    FileCommand::Print => {
+                        let path_str = path.as_os_str().to_str().unwrap();
+                        println!("{path_str}");
                     }
                 }
             } else if cli.verbose {
