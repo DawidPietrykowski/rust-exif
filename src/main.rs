@@ -1,6 +1,8 @@
-use clap::{Parser, Subcommand};
+use clap::{Parser, Subcommand, ValueEnum};
 use rexiv2::Metadata;
 use std::ffi::OsStr;
+use std::fmt;
+use std::fmt::{Display, Formatter};
 use std::path::{Path, PathBuf};
 use std::{fs, io};
 
@@ -31,6 +33,9 @@ struct Cli {
 
     #[arg(short = 'f', long, default_value_t = false)]
     flip_exclusion: bool,
+
+    #[arg(short = 'c', long, default_value_t = ComparisonCommand::MoreEqual)]
+    comparison_command: ComparisonCommand,
 }
 
 #[derive(Subcommand)]
@@ -39,6 +44,23 @@ enum FileCommand {
     Copy,
     Delete,
     Print,
+}
+
+impl Display for ComparisonCommand {
+    fn fmt(&self, f: &mut Formatter) -> fmt::Result {
+        match self {
+            ComparisonCommand::MoreEqual => write!(f, "MoreEqual"),
+            ComparisonCommand::LessEqual => write!(f, "LessEqual"),
+            ComparisonCommand::Equal => write!(f, "Equal"),
+        }
+    }
+}
+
+#[derive(ValueEnum, Clone, Debug)]
+enum ComparisonCommand {
+    MoreEqual,
+    LessEqual,
+    Equal,
 }
 
 fn main() {
@@ -86,7 +108,11 @@ fn main() {
             continue;
         };
 
-        let mut should_move = rating >= cli.threshold;
+        let mut should_move = match cli.comparison_command {
+            ComparisonCommand::MoreEqual => rating >= cli.threshold,
+            ComparisonCommand::LessEqual => rating <= cli.threshold,
+            ComparisonCommand::Equal => rating == cli.threshold,
+        };
         if cli.inverse {
             should_move = !should_move;
         }
