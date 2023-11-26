@@ -204,6 +204,7 @@ fn visit_dirs(
                         depth + 1,
                         excluded_paths.clone(),
                         flip_exclusion,
+                        print_directories,
                     )?;
                 }
             } else {
