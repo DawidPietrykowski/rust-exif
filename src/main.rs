@@ -93,6 +93,7 @@ fn main() {
         0,
         cli.exclude,
         cli.flip_exclusion,
+        cli.verbose,
     )
     .expect("Failed to iterate over directories");
 
@@ -175,6 +176,7 @@ fn visit_dirs(
     depth: i32,
     excluded_paths: Vec<String>,
     flip_exclusion: bool,
+    print_directories: bool,
 ) -> io::Result<()> {
     if dir.is_dir() {
         for entry in fs::read_dir(dir)? {
@@ -193,7 +195,7 @@ fn visit_dirs(
                 }
                 if (depth != 0 || filter_res) && !dir_name.starts_with(".") {
                     // filter
-                    if depth == 0 {
+                    if print_directories && depth == 0 {
                         println!("Including {dir_name}");
                     }
                     visit_dirs(
