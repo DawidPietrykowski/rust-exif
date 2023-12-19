@@ -23,7 +23,7 @@ struct Cli {
     verbose: bool,
 
     #[arg(short = 'd', long)]
-    dest: std::path::PathBuf,
+    dest: Option<std::path::PathBuf>,
 
     #[arg(short = 's', long)]
     src: std::path::PathBuf,
@@ -34,11 +34,14 @@ struct Cli {
     #[arg(short = 'f', long, default_value_t = false)]
     flip_exclusion: bool,
 
+    #[arg(short = 'm', long, default_value_t = false)]
+    match_raws: bool,
+
     #[arg(short = 'c', long, default_value_t = ComparisonCommand::MoreEqual)]
     comparison_command: ComparisonCommand,
 }
 
-#[derive(Subcommand)]
+#[derive(Subcommand, PartialEq)]
 enum FileCommand {
     Move,
     Copy,
@@ -76,14 +79,22 @@ fn main() {
     };
 
     let search_path = cli.src;
-    let output_path: PathBuf = cli.dest;
 
     assert!(search_path.is_dir(), "Source path must be a directory");
 
-    if output_path.exists() {
-        assert!(output_path.is_dir(), "Output path must be a directory");
-    } else {
-        fs::create_dir(output_path.clone()).expect("Failed to create output directory");
+    let output_path: Option<PathBuf> = cli.dest;
+
+    if cli.command == FileCommand::Move || cli.command == FileCommand::Copy {
+        assert!(output_path.is_some(), "Destination path must be specified");
+        if output_path.clone().unwrap().exists() {
+            assert!(
+                output_path.clone().unwrap().is_dir(),
+                "Output path must be a directory"
+            );
+        } else {
+            fs::create_dir(output_path.clone().unwrap().clone())
+                .expect("Failed to create output directory");
+        }
     }
 
     let mut all_paths: Vec<PathBuf> = Vec::new();
@@ -101,11 +112,13 @@ fn main() {
         let relative_path = path
             .strip_prefix(search_path.clone())
             .expect(format!("Failed to strip root prefix of file {:?}", path).as_str());
-        let new_file_path = output_path.join(&relative_path);
 
         let res: Result<i32, String> = get_rating(path.clone());
-        let Ok(rating) = res else{
-            println!("Skipping {path:?} due to {}", res.err().unwrap_or("Unknown error".to_string()).to_string());
+        let Ok(rating) = res else {
+            println!(
+                "Skipping {path:?} due to {}",
+                res.err().unwrap_or("Unknown error".to_string()).to_string()
+            );
             continue;
         };
 
@@ -119,53 +132,67 @@ fn main() {
         }
 
         if should_move {
+            let path_str = path.as_os_str().to_str().unwrap();
+
             if cli.verbose {
-                println!("Rated: {rating} {command_name} {path:?} {new_file_path:?}");
+                println!("Rated: {rating} {command_name} {path:?}");
             }
 
-            let dir_path = new_file_path.parent().unwrap();
-            if !path_exists(dir_path.to_path_buf()) {
-                fs::create_dir(dir_path.to_path_buf()).unwrap();
-            }
-            if !path_exists(new_file_path.clone()) {
-                match cli.command {
-                    FileCommand::Move => {
-                        fs::rename(path, new_file_path).unwrap();
-                    }
-                    FileCommand::Copy => {
-                        fs::copy(path, new_file_path).unwrap();
-                    }
-                    FileCommand::Delete => {
-                        fs::remove_file(path).unwrap();
-                    }
-                    FileCommand::Print => {
-                        let path_str = path.as_os_str().to_str().unwrap();
-                        println!("{path_str}");
-                    }
+            let mut new_file_path: Option<PathBuf> = None;
+            if cli.command == FileCommand::Move || cli.command == FileCommand::Copy {
+                new_file_path = Some(output_path.clone().unwrap().join(&relative_path));
+                let new_file_path_clone = new_file_path.clone().unwrap();
+                let dir_path: &Path = new_file_path_clone.parent().unwrap();
+                if !path_exists(dir_path.to_path_buf()) {
+                    fs::create_dir(dir_path.to_path_buf()).unwrap();
                 }
-            } else if cli.verbose {
-                println!("Skipping {new_file_path:?} as it already exists");
             }
-            // if !path.as_os_str().to_str().unwrap().contains("HEIC") {
-            //     let jpg_suffix = match path.as_os_str().to_str().unwrap().contains(".JPG") {
-            //         true => ".JPG",
-            //         false => "-c.jpg",
-            //     };
-            //     let raw_path = (path
-            //         .as_os_str()
-            //         .to_str()
-            //         .unwrap()
-            //         .strip_suffix(jpg_suffix)
-            //         .unwrap()
-            //         .to_string()
-            //         + ".ARW");
-            //     let raw_path_str = raw_path.as_str();
-            //     if path_exists(raw_path_str) {
-            //         let out_path_raw =
-            //             out_path.strip_suffix(jpg_suffix).unwrap().to_string() + ".ARW";
-            //         fs::copy(raw_path_str, Path::new(out_path_raw.as_str())).unwrap();
-            //     }
-            // }
+
+            apply_command(
+                &cli.command,
+                cli.verbose,
+                path.clone(),
+                new_file_path.clone(),
+            );
+            if cli.match_raws && (path_str.contains(".jpg") || path_str.contains(".JPG")) {
+                let mut raw_path = path.clone();
+                raw_path.set_extension("ARW");
+
+                if raw_path.exists() {
+                    let raw_relative_path = raw_path
+                        .strip_prefix(search_path.clone())
+                        .expect(format!("Failed to strip root prefix of file {:?}", path).as_str());
+                    let new_raw_file_path = output_path.clone().unwrap().join(&raw_relative_path);
+                    apply_command(&cli.command, cli.verbose, raw_path, Some(new_raw_file_path));
+                }
+            }
+        }
+    }
+}
+
+fn apply_command(
+    command: &FileCommand,
+    verbose: bool,
+    path: PathBuf,
+    new_file_path: Option<PathBuf>,
+) {
+    if verbose {
+        println!("Skipping {new_file_path:?} as it already exists");
+    }
+
+    match command {
+        FileCommand::Move => {
+            fs::rename(path, new_file_path.unwrap()).unwrap();
+        }
+        FileCommand::Copy => {
+            fs::copy(path, new_file_path.unwrap()).unwrap();
+        }
+        FileCommand::Delete => {
+            fs::remove_file(path).unwrap();
+        }
+        FileCommand::Print => {
+            let path_str = path.as_os_str().to_str().unwrap();
+            println!("{path_str}");
         }
     }
 }
