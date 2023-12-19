@@ -214,7 +214,8 @@ fn apply_command(
                 }
             } else {
                 if verbose {
-                    println!("Moving {path:?} to {new_file_path:?}");
+                    let new_path_print = new_file_path.clone().unwrap();
+                    println!("Moving {path:?} to {new_path_print:?}");
                 }
                 fs::rename(path, new_file_path.unwrap()).unwrap();
             }
@@ -226,7 +227,8 @@ fn apply_command(
                 }
             } else {
                 if verbose {
-                    println!("Copying {path:?} to {new_file_path:?}");
+                    let new_path_print = new_file_path.clone().unwrap();
+                    println!("Copying {path:?} to {new_path_print:?}");
                 }
                 fs::copy(path, new_file_path.unwrap()).unwrap();
             }
