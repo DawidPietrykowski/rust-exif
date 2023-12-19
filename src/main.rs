@@ -37,6 +37,9 @@ struct Cli {
     #[arg(short = 'm', long, default_value_t = false)]
     match_raws: bool,
 
+    #[arg(short = 'l', long)]
+    label: Option<String>,
+
     #[arg(short = 'c', long, default_value_t = ComparisonCommand::MoreEqual)]
     comparison_command: ComparisonCommand,
 }
@@ -52,9 +55,9 @@ enum FileCommand {
 impl Display for ComparisonCommand {
     fn fmt(&self, f: &mut Formatter) -> fmt::Result {
         match self {
-            ComparisonCommand::MoreEqual => write!(f, "MoreEqual"),
-            ComparisonCommand::LessEqual => write!(f, "LessEqual"),
-            ComparisonCommand::Equal => write!(f, "Equal"),
+            ComparisonCommand::MoreEqual => write!(f, "more-equal"),
+            ComparisonCommand::LessEqual => write!(f, "less-equal"),
+            ComparisonCommand::Equal => write!(f, "equal"),
         }
     }
 }
@@ -122,11 +125,31 @@ fn main() {
             continue;
         };
 
-        let mut should_move = match cli.comparison_command {
+        let pass_label_check = if let Some(ref label) = cli.label {
+            let res: Result<Option<String>, String> = get_label(path.clone());
+            let Ok(label_res) = res else {
+                println!(
+                    "Skipping {path:?} due to {}",
+                    res.err().unwrap_or("Unknown error".to_string()).to_string()
+                );
+                continue;
+            };
+            match label_res {
+                Some(label_res) => label_res == *label,
+                None => false,
+            }
+        } else {
+            true
+        };
+
+        let pass_treshold_check = match cli.comparison_command {
             ComparisonCommand::MoreEqual => rating >= cli.threshold,
             ComparisonCommand::LessEqual => rating <= cli.threshold,
             ComparisonCommand::Equal => rating == cli.threshold,
         };
+
+        let mut should_move = pass_treshold_check && pass_label_check;
+
         if cli.inverse {
             should_move = !should_move;
         }
@@ -159,11 +182,18 @@ fn main() {
                 raw_path.set_extension("ARW");
 
                 if raw_path.exists() {
+                    if cli.verbose {
+                        println!("Matched raw file {raw_path:?}");
+                    }
                     let raw_relative_path = raw_path
                         .strip_prefix(search_path.clone())
                         .expect(format!("Failed to strip root prefix of file {:?}", path).as_str());
-                    let new_raw_file_path = output_path.clone().unwrap().join(&raw_relative_path);
-                    apply_command(&cli.command, cli.verbose, raw_path, Some(new_raw_file_path));
+                    let new_raw_file_path: Option<PathBuf> = if output_path.is_none() {
+                        None
+                    } else {
+                        Some(output_path.clone().unwrap().join(&raw_relative_path))
+                    };
+                    apply_command(&cli.command, cli.verbose, raw_path, new_raw_file_path);
                 }
             }
         }
@@ -176,16 +206,30 @@ fn apply_command(
     path: PathBuf,
     new_file_path: Option<PathBuf>,
 ) {
-    if verbose {
-        println!("Skipping {new_file_path:?} as it already exists");
-    }
-
     match command {
         FileCommand::Move => {
-            fs::rename(path, new_file_path.unwrap()).unwrap();
+            if new_file_path.clone().unwrap().exists() {
+                if verbose {
+                    println!("Skipping {new_file_path:?} as it already exists");
+                }
+            } else {
+                if verbose {
+                    println!("Moving {path:?} to {new_file_path:?}");
+                }
+                fs::rename(path, new_file_path.unwrap()).unwrap();
+            }
         }
         FileCommand::Copy => {
-            fs::copy(path, new_file_path.unwrap()).unwrap();
+            if new_file_path.clone().unwrap().exists() {
+                if verbose {
+                    println!("Skipping {new_file_path:?} as it already exists");
+                }
+            } else {
+                if verbose {
+                    println!("Copying {path:?} to {new_file_path:?}");
+                }
+                fs::copy(path, new_file_path.unwrap()).unwrap();
+            }
         }
         FileCommand::Delete => {
             fs::remove_file(path).unwrap();
@@ -268,6 +312,24 @@ fn get_rating(filename: PathBuf) -> Result<i32, String> {
         Ok(meta) => {
             let rating = meta.get_tag_numeric("Xmp.xmp.Rating");
             Ok(rating)
+        }
+        Err(e) => Err(e.to_string()),
+    }
+}
+
+fn get_label(filename: PathBuf) -> Result<Option<String>, String> {
+    if !path_exists(filename.clone()) {
+        return Err("File doesn't exist".to_string());
+    }
+
+    let meta = Metadata::new_from_path(filename);
+    match meta {
+        Ok(meta) => {
+            let label = meta.get_tag_string("Xmp.xmp.Label");
+            match label {
+                Ok(label) => Ok(Some(label)),
+                Err(_) => Ok(None),
+            }
         }
         Err(e) => Err(e.to_string()),
     }
