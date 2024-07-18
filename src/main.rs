@@ -1,4 +1,4 @@
-use crate::xmp::xmp::read_rating_xmp;
+use crate::xmp::read_rating_xmp;
 use anyhow::{anyhow, Result};
 use clap::{Parser, Subcommand, ValueEnum};
 use rexiv2::Metadata;
@@ -6,9 +6,8 @@ use std::ffi::OsStr;
 use std::fmt::{Display, Formatter};
 use std::path::{Path, PathBuf};
 use std::{fmt, fs, io};
-// use xmp;
 
-pub mod xmp;
+mod xmp;
 
 const IMAGE_EXTENSIONS: [&str; 6] = ["heic", "jpg", "jpeg", "png", "arw", "dng"];
 const VIDEOS_EXTENSIONS: [&str; 3] = ["mov", "mp4", "avi"];
