@@ -76,8 +76,8 @@ impl<T: Default + Clone + Copy + PartialEq> CircularBuffer<T> {
 const XMP_START: &[u8] = b"<x:xmpmeta";
 const XMP_END: &[u8] = b"</x:xmpmeta>";
 const XMP_SEARCH_BUFFER_SIZE: usize = 4096 * 16;
-const XMP_END_SEARCH_SPACE_SIZE: usize = 4096 * 32;
-const XMP_MAX_SEARCH_SPACE_SIZE: usize = 4096 * 1024;
+const XMP_END_SEARCH_SPACE_SIZE: usize = 4096 * 64;
+const XMP_MAX_SEARCH_SPACE_SIZE: usize = 4096 * 64;
 
 pub fn read_rating_xmp(filename: PathBuf) -> Result<i32> {
     let xmp_data = extract_xmp_data(filename.clone(), true)?
