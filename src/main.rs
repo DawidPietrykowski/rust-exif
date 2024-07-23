@@ -9,7 +9,8 @@ use std::{fmt, fs, io};
 
 mod xmp;
 
-const IMAGE_EXTENSIONS: [&str; 6] = ["heic", "jpg", "jpeg", "png", "arw", "dng"];
+const IMAGE_EXTENSIONS: [&str; 4] = ["heic", "jpg", "jpeg", "png"];
+const RAW_IMAGE_EXENSIONS: [&str; 2] = ["arw", "dng"];
 const VIDEOS_EXTENSIONS: [&str; 3] = ["mov", "mp4", "avi"];
 
 #[derive(Parser)]
@@ -115,6 +116,7 @@ fn main() {
         cli.exclude,
         cli.flip_exclusion,
         cli.include_videos,
+        cli.match_raws,
         cli.verbose,
     )
     .expect("Failed to iterate over directories");
@@ -258,6 +260,7 @@ fn visit_dirs(
     excluded_paths: Vec<String>,
     flip_exclusion: bool,
     include_videos: bool,
+    raws_matched: bool,
     print_directories: bool,
 ) -> io::Result<()> {
     if dir.is_dir() {
@@ -287,12 +290,13 @@ fn visit_dirs(
                         excluded_paths.clone(),
                         flip_exclusion,
                         include_videos,
+                        raws_matched,
                         print_directories,
                     )?;
                 }
             } else {
                 let path_buf = entry.path();
-                if is_file_allowed(&path_buf, include_videos) {
+                if is_file_allowed(&path_buf, include_videos, raws_matched) {
                     // println!("Adding {path_buf:?}");
                     paths.push(path_buf);
                 } else {
@@ -366,7 +370,7 @@ fn get_label(filename: PathBuf) -> Result<Option<String>, String> {
     }
 }
 
-fn is_file_allowed(filename: &PathBuf, include_videos: bool) -> bool {
+fn is_file_allowed(filename: &PathBuf, include_videos: bool, raws_matched: bool) -> bool {
     if filename
         .file_name()
         .unwrap()
@@ -383,13 +387,15 @@ fn is_file_allowed(filename: &PathBuf, include_videos: bool) -> bool {
         .unwrap();
     let lower_passed = ext.to_lowercase();
 
-    let ext: Vec<_> = match include_videos {
-        true => IMAGE_EXTENSIONS
-            .iter()
-            .chain(VIDEOS_EXTENSIONS.iter())
-            .collect::<Vec<_>>(),
-        false => IMAGE_EXTENSIONS.iter().collect(),
-    };
+    let mut ext: Vec<&str> = IMAGE_EXTENSIONS.to_vec();
+
+    if include_videos {
+        ext.extend(VIDEOS_EXTENSIONS.iter());
+    }
+
+    if !raws_matched {
+        ext.extend(RAW_IMAGE_EXENSIONS.iter());
+    }
 
     for allowed_extension in ext {
         let lower_allowed = allowed_extension.to_lowercase();
