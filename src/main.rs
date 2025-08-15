@@ -10,7 +10,8 @@ use std::{fmt, fs, io};
 mod xmp;
 
 const IMAGE_EXTENSIONS: [&str; 4] = ["heic", "jpg", "jpeg", "png"];
-const RAW_IMAGE_EXENSIONS: [&str; 2] = ["arw", "dng"];
+// TODO: restore multiple RAW file extension support
+// const RAW_IMAGE_EXENSIONS: [&str; 2] = ["arw", "dng"];
 const VIDEOS_EXTENSIONS: [&str; 3] = ["mov", "mp4", "avi"];
 
 #[derive(Parser)]
@@ -48,6 +49,9 @@ struct Cli {
     #[arg(short = 'l', long)]
     label: Option<String>,
 
+    #[arg(short = 'n', long, default_value_t = false)]
+    dry_run: bool,
+
     #[arg(short = 'c', long, default_value_t = ComparisonCommand::MoreEqual)]
     comparison_command: ComparisonCommand,
 }
@@ -58,6 +62,8 @@ enum FileCommand {
     Copy,
     Delete,
     Print,
+    DeleteRaws,
+    CopyRaws,
 }
 
 impl Display for ComparisonCommand {
@@ -77,6 +83,38 @@ enum ComparisonCommand {
     Equal,
 }
 
+#[derive(Clone, Eq, PartialEq, Debug)]
+struct Entry {
+    path: PathBuf,
+    raw_path: Option<PathBuf>,
+}
+
+impl Entry {
+    fn new(path: PathBuf) -> Entry {
+        Entry {
+            path,
+            raw_path: None,
+        }
+    }
+
+    fn new_with_raw(path: PathBuf, raw_path: PathBuf) -> Entry {
+        Entry {
+            path,
+            raw_path: Some(raw_path),
+        }
+    }
+}
+
+impl Display for Entry {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_fmt(format_args!(" p: {:?}", self.path))?;
+        if let Some(raw_path) = &self.raw_path {
+            f.write_fmt(format_args!(" r: {:?}", raw_path))?;
+        }
+        Ok(())
+    }
+}
+
 fn main() {
     let cli: Cli = Cli::parse();
 
@@ -87,6 +125,8 @@ fn main() {
         FileCommand::Copy => "Copying",
         FileCommand::Delete => "Deleting",
         FileCommand::Print => "Printing",
+        FileCommand::DeleteRaws => "Deleting raw file",
+        FileCommand::CopyRaws => "Copying raw file",
     };
 
     let search_path = cli.src;
@@ -95,7 +135,11 @@ fn main() {
 
     let output_path: Option<PathBuf> = cli.dest;
 
-    if cli.command == FileCommand::Move || cli.command == FileCommand::Copy {
+    let requires_destination = cli.command == FileCommand::Move
+        || cli.command == FileCommand::Copy
+        || cli.command == FileCommand::CopyRaws;
+
+    if requires_destination {
         assert!(output_path.is_some(), "Destination path must be specified");
         if output_path.clone().unwrap().exists() {
             assert!(
@@ -108,7 +152,7 @@ fn main() {
         }
     }
 
-    let mut all_paths: Vec<PathBuf> = Vec::new();
+    let mut all_paths: Vec<Entry> = Vec::new();
     visit_dirs(
         search_path.as_ref(),
         &mut all_paths,
@@ -123,12 +167,13 @@ fn main() {
 
     for path in all_paths {
         let relative_path = path
+            .path
             .strip_prefix(search_path.clone())
             .expect(format!("Failed to strip root prefix of file {:?}", path).as_str());
 
-        let res: Result<i32> = get_rating(path.clone());
+        let res: Result<i32> = get_rating(path.path.clone());
         let Ok(rating) = res else {
-            println!(
+            eprintln!(
                 "Skipping {path:?} due to {}",
                 res.err().unwrap_or(anyhow!("Unknown error")).to_string()
             );
@@ -136,9 +181,9 @@ fn main() {
         };
 
         let pass_label_check = if let Some(ref label) = cli.label {
-            let res: Result<Option<String>, String> = get_label(path.clone());
+            let res: Result<Option<String>, String> = get_label(path.path.clone());
             let Ok(label_res) = res else {
-                println!(
+                eprintln!(
                     "Skipping {path:?} due to {}",
                     res.err().unwrap_or("Unknown error".to_string()).to_string()
                 );
@@ -165,47 +210,31 @@ fn main() {
         }
 
         if should_move {
-            let path_str = path.as_os_str().to_str().unwrap();
-
             if cli.verbose {
-                println!("Rated: {rating} {command_name} {path:?}");
+                eprintln!("Rated: {rating} {command_name} {path}");
             }
 
-            let mut new_file_path: Option<PathBuf> = None;
-            if cli.command == FileCommand::Move || cli.command == FileCommand::Copy {
-                new_file_path = Some(output_path.clone().unwrap().join(&relative_path));
-                let new_file_path_clone = new_file_path.clone().unwrap();
-                let dir_path: &Path = new_file_path_clone.parent().unwrap();
+            let mut dest_dir: Option<PathBuf> = None;
+            if requires_destination {
+                let Some(output_path) = output_path.clone() else {
+                    panic!("Did not specify destination path");
+                };
+                let new_file_path = output_path.join(&relative_path);
+                let dir_path: &Path = new_file_path.parent().unwrap();
                 if !path_exists(dir_path.to_path_buf()) {
+                    eprintln!("Creating destination directory: {dir_path:?}");
                     fs::create_dir(dir_path.to_path_buf()).unwrap();
                 }
+                dest_dir = Some(dir_path.to_path_buf());
             }
 
             apply_command(
                 &cli.command,
                 cli.verbose,
                 path.clone(),
-                new_file_path.clone(),
+                dest_dir,
+                cli.dry_run,
             );
-            if cli.match_raws && (path_str.contains(".jpg") || path_str.contains(".JPG")) {
-                let mut raw_path = path.clone();
-                raw_path.set_extension("ARW");
-
-                if raw_path.exists() {
-                    if cli.verbose {
-                        println!("Matched raw file {raw_path:?}");
-                    }
-                    let raw_relative_path = raw_path
-                        .strip_prefix(search_path.clone())
-                        .expect(format!("Failed to strip root prefix of file {:?}", path).as_str());
-                    let new_raw_file_path: Option<PathBuf> = if output_path.is_none() {
-                        None
-                    } else {
-                        Some(output_path.clone().unwrap().join(&raw_relative_path))
-                    };
-                    apply_command(&cli.command, cli.verbose, raw_path, new_raw_file_path);
-                }
-            }
         }
     }
 }
@@ -213,55 +242,128 @@ fn main() {
 fn apply_command(
     command: &FileCommand,
     verbose: bool,
-    path: PathBuf,
-    new_file_path: Option<PathBuf>,
+    path: Entry,
+    destination_directory: Option<PathBuf>,
+    dry_run: bool,
 ) {
     match command {
         FileCommand::Move => {
-            if new_file_path.clone().unwrap().exists() {
-                if verbose {
-                    println!("Skipping {new_file_path:?} as it already exists");
-                }
-            } else {
-                if verbose {
-                    let new_path_print = new_file_path.clone().unwrap();
-                    println!("Moving {path:?} to {new_path_print:?}");
-                }
-                fs::rename(path, new_file_path.unwrap()).unwrap();
+            let new_file_path = destination_directory
+                .clone()
+                .unwrap()
+                .join(path.path.file_name().unwrap());
+            move_file(path.path, new_file_path, dry_run, verbose);
+            if let Some(raw_path) = path.raw_path {
+                let new_file_path = destination_directory
+                    .unwrap()
+                    .join(raw_path.file_name().unwrap());
+                move_file(raw_path, new_file_path, dry_run, verbose);
             }
         }
         FileCommand::Copy => {
-            if new_file_path.clone().unwrap().exists() {
-                if verbose {
-                    println!("Skipping {new_file_path:?} as it already exists");
-                }
-            } else {
-                if verbose {
-                    let new_path_print = new_file_path.clone().unwrap();
-                    println!("Copying {path:?} to {new_path_print:?}");
-                }
-                fs::copy(path, new_file_path.unwrap()).unwrap();
+            let new_file_path = destination_directory
+                .clone()
+                .unwrap()
+                .join(path.path.file_name().unwrap());
+            copy_file(path.path, new_file_path, dry_run, verbose);
+            if let Some(raw_path) = path.raw_path {
+                let new_file_path = destination_directory
+                    .unwrap()
+                    .join(raw_path.file_name().unwrap());
+                copy_file(raw_path, new_file_path, dry_run, verbose);
             }
         }
         FileCommand::Delete => {
-            fs::remove_file(path).unwrap();
+            remove_file(path.path, dry_run, verbose);
+            if let Some(raw_path) = path.raw_path {
+                remove_file(raw_path, dry_run, verbose);
+            }
         }
         FileCommand::Print => {
-            let path_str = path.as_os_str().to_str().unwrap();
-            println!("{path_str}");
+            println!("{}", path.path.as_os_str().to_str().unwrap());
+            if let Some(raw_path) = path.raw_path {
+                println!("{}", raw_path.as_os_str().to_str().unwrap());
+            }
+        }
+        FileCommand::DeleteRaws => {
+            if let Some(raw_path) = path.raw_path {
+                remove_file(raw_path, dry_run, verbose);
+            }
+        }
+        FileCommand::CopyRaws => {
+            if let Some(raw_path) = path.raw_path {
+                let new_file_path = destination_directory
+                    .unwrap()
+                    .join(raw_path.file_name().unwrap());
+                copy_file(raw_path, new_file_path, dry_run, verbose);
+            }
+        }
+    }
+}
+
+fn remove_file<P: AsRef<Path>>(path: P, dry_run: bool, verbose: bool) {
+    if verbose {
+        eprintln!("rm {:?}", path.as_ref());
+    }
+    match dry_run {
+        true => println!("rm {:?}", path.as_ref()),
+        false => fs::remove_file(path).unwrap(),
+    }
+}
+
+fn move_file<P: AsRef<Path>>(path: P, dest: P, dry_run: bool, verbose: bool) {
+    if dest.as_ref().exists() {
+        if verbose {
+            eprintln!(
+                "Skipping {:?} as {:?} it already exists",
+                path.as_ref(),
+                dest.as_ref()
+            );
+        }
+        return;
+    }
+    if verbose {
+        eprintln!("mv {:?} {:?}", path.as_ref(), dest.as_ref());
+    }
+    match dry_run {
+        true => println!("mv {:?} {:?}", path.as_ref(), dest.as_ref()),
+        false => fs::rename(path, dest).unwrap(),
+    }
+}
+
+fn copy_file<P: AsRef<Path>>(path: P, dest: P, dry_run: bool, verbose: bool) {
+    if dest.as_ref().exists() {
+        if verbose {
+            eprintln!(
+                "Skipping {:?} as {:?} it already exists",
+                path.as_ref(),
+                dest.as_ref()
+            );
+        }
+        return;
+    }
+    if verbose {
+        eprintln!("cp {:?} {:?}", path.as_ref(), dest.as_ref());
+    }
+    match dry_run {
+        true => {
+            println!("cp {:?} {:?}", path.as_ref(), dest.as_ref());
+        }
+        false => {
+            fs::copy(path, dest).unwrap();
         }
     }
 }
 
 fn visit_dirs(
     dir: &Path,
-    paths: &mut Vec<PathBuf>,
+    paths: &mut Vec<Entry>,
     depth: i32,
     excluded_paths: Vec<String>,
     flip_exclusion: bool,
     include_videos: bool,
     raws_matched: bool,
-    print_directories: bool,
+    verbose: bool,
 ) -> io::Result<()> {
     if dir.is_dir() {
         for entry in fs::read_dir(dir)? {
@@ -280,8 +382,8 @@ fn visit_dirs(
                 }
                 if (depth != 0 || filter_res) && !dir_name.starts_with(".") {
                     // filter
-                    if print_directories && depth == 0 {
-                        println!("Including {dir_name}");
+                    if verbose && depth == 0 {
+                        eprintln!("Including {dir_name}");
                     }
                     visit_dirs(
                         &path,
@@ -291,16 +393,25 @@ fn visit_dirs(
                         flip_exclusion,
                         include_videos,
                         raws_matched,
-                        print_directories,
+                        verbose,
                     )?;
                 }
             } else {
                 let path_buf = entry.path();
-                if is_file_allowed(&path_buf, include_videos, raws_matched) {
-                    // println!("Adding {path_buf:?}");
-                    paths.push(path_buf);
+                if is_file_allowed(&path_buf, include_videos) {
+                    let raw_file_path = path_buf.with_extension("ARW");
+                    if raws_matched && raw_file_path.exists() {
+                        if verbose {
+                            eprintln!("Matched raw file {raw_file_path:?}");
+                        }
+                        paths.push(Entry::new_with_raw(path_buf, raw_file_path));
+                    } else {
+                        paths.push(Entry::new(path_buf));
+                    }
                 } else {
-                    // println!("Skipping {path_buf:?}");
+                    if verbose {
+                        eprintln!("Skipping file {path_buf:?}");
+                    }
                 }
             }
         }
@@ -370,7 +481,7 @@ fn get_label(filename: PathBuf) -> Result<Option<String>, String> {
     }
 }
 
-fn is_file_allowed(filename: &PathBuf, include_videos: bool, raws_matched: bool) -> bool {
+fn is_file_allowed(filename: &PathBuf, include_videos: bool) -> bool {
     if filename
         .file_name()
         .unwrap()
@@ -391,10 +502,6 @@ fn is_file_allowed(filename: &PathBuf, include_videos: bool, raws_matched: bool)
 
     if include_videos {
         ext.extend(VIDEOS_EXTENSIONS.iter());
-    }
-
-    if !raws_matched {
-        ext.extend(RAW_IMAGE_EXENSIONS.iter());
     }
 
     for allowed_extension in ext {

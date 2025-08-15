@@ -30,7 +30,7 @@ impl<T: Default + Clone + Copy> CircularBuffer<T> {
         self.buffer[(self.index + ith) % self.buffer.len()]
     }
 
-    fn iter(&self) -> CircularBufferIterator<T> {
+    fn iter(&self) -> CircularBufferIterator<'_, T> {
         CircularBufferIterator::<T> {
             buffer: self,
             current_index: 0,
