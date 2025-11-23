@@ -52,6 +52,9 @@ struct Cli {
     #[arg(short = 'n', long, default_value_t = false)]
     dry_run: bool,
 
+    #[arg(short = 'o', long, default_value_t = false)]
+    r#override: bool,
+
     #[arg(short = 'c', long, default_value_t = ComparisonCommand::MoreEqual)]
     comparison_command: ComparisonCommand,
 }
@@ -234,6 +237,7 @@ fn main() {
                 path.clone(),
                 dest_dir,
                 cli.dry_run,
+                cli.r#override
             );
         }
     }
@@ -245,6 +249,7 @@ fn apply_command(
     path: Entry,
     destination_directory: Option<PathBuf>,
     dry_run: bool,
+    override_file: bool,
 ) {
     match command {
         FileCommand::Move => {
@@ -252,12 +257,12 @@ fn apply_command(
                 .clone()
                 .unwrap()
                 .join(path.path.file_name().unwrap());
-            move_file(path.path, new_file_path, dry_run, verbose);
+            move_file(path.path, new_file_path, dry_run, override_file, verbose);
             if let Some(raw_path) = path.raw_path {
                 let new_file_path = destination_directory
                     .unwrap()
                     .join(raw_path.file_name().unwrap());
-                move_file(raw_path, new_file_path, dry_run, verbose);
+                move_file(raw_path, new_file_path, dry_run, override_file, verbose);
             }
         }
         FileCommand::Copy => {
@@ -265,12 +270,12 @@ fn apply_command(
                 .clone()
                 .unwrap()
                 .join(path.path.file_name().unwrap());
-            copy_file(path.path, new_file_path, dry_run, verbose);
+            copy_file(path.path, new_file_path, dry_run, override_file, verbose);
             if let Some(raw_path) = path.raw_path {
                 let new_file_path = destination_directory
                     .unwrap()
                     .join(raw_path.file_name().unwrap());
-                copy_file(raw_path, new_file_path, dry_run, verbose);
+                copy_file(raw_path, new_file_path, dry_run, override_file, verbose);
             }
         }
         FileCommand::Delete => {
@@ -295,7 +300,7 @@ fn apply_command(
                 let new_file_path = destination_directory
                     .unwrap()
                     .join(raw_path.file_name().unwrap());
-                copy_file(raw_path, new_file_path, dry_run, verbose);
+                copy_file(raw_path, new_file_path, dry_run, override_file, verbose);
             }
         }
     }
@@ -311,16 +316,26 @@ fn remove_file<P: AsRef<Path>>(path: P, dry_run: bool, verbose: bool) {
     }
 }
 
-fn move_file<P: AsRef<Path>>(path: P, dest: P, dry_run: bool, verbose: bool) {
+fn move_file<P: AsRef<Path>>(path: P, dest: P, dry_run: bool, override_file: bool, verbose: bool) {
     if dest.as_ref().exists() {
-        if verbose {
-            eprintln!(
-                "Skipping {:?} as {:?} it already exists",
-                path.as_ref(),
-                dest.as_ref()
-            );
+        if !override_file {
+            if verbose {
+                eprintln!(
+                    "Skipping {:?} as {:?} it already exists",
+                    path.as_ref(),
+                    dest.as_ref()
+                );
+            }
+            return;
+        } else {
+            if verbose {
+                eprintln!(
+                    "Overriding existing {:?} with {:?}",
+                    dest.as_ref(),
+                    path.as_ref()
+                );
+            }
         }
-        return;
     }
     if verbose {
         eprintln!("mv {:?} {:?}", path.as_ref(), dest.as_ref());
@@ -331,16 +346,26 @@ fn move_file<P: AsRef<Path>>(path: P, dest: P, dry_run: bool, verbose: bool) {
     }
 }
 
-fn copy_file<P: AsRef<Path>>(path: P, dest: P, dry_run: bool, verbose: bool) {
+fn copy_file<P: AsRef<Path>>(path: P, dest: P, dry_run: bool, override_file: bool, verbose: bool) {
     if dest.as_ref().exists() {
-        if verbose {
-            eprintln!(
-                "Skipping {:?} as {:?} it already exists",
-                path.as_ref(),
-                dest.as_ref()
-            );
+        if !override_file {
+            if verbose {
+                eprintln!(
+                    "Skipping {:?} as {:?} it already exists",
+                    path.as_ref(),
+                    dest.as_ref()
+                );
+            }
+            return;
+        } else {
+            if verbose {
+                eprintln!(
+                    "Overriding existing {:?} with {:?}",
+                    dest.as_ref(),
+                    path.as_ref()
+                );
+            }
         }
-        return;
     }
     if verbose {
         eprintln!("cp {:?} {:?}", path.as_ref(), dest.as_ref());
