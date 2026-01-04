@@ -52,6 +52,9 @@ struct Cli {
     #[arg(long)]
     ignore_tag: Option<String>,
 
+    #[arg(long)]
+    include_tag: Option<String>,
+
     #[arg(short = 'n', long, default_value_t = false)]
     dry_run: bool,
 
@@ -203,6 +206,23 @@ fn main() {
             true
         };
 
+        let pass_include_label_check = if let Some(ref include_tag) = cli.include_tag {
+            let res: Result<Option<Vec<String>>, String> = get_tags(path.path.clone());
+            let Ok(tags_res) = res else {
+                eprintln!(
+                    "Skipping {path:?} due to {}",
+                    res.err().unwrap_or("Unknown error".to_string()).to_string()
+                );
+                continue;
+            };
+            match tags_res {
+                Some(tags_res) => tags_res.contains(&include_tag.to_lowercase()),
+                None => false,
+            }
+        } else {
+            true
+        };
+
         let pass_ignore_label_check = if let Some(ref ignore_tag) = cli.ignore_tag {
             let res: Result<Option<Vec<String>>, String> = get_tags(path.path.clone());
             let Ok(tags_res) = res else {
@@ -213,7 +233,7 @@ fn main() {
                 continue;
             };
             match tags_res {
-                Some(tags_res) => !tags_res.contains(ignore_tag),
+                Some(tags_res) => !tags_res.contains(&ignore_tag.to_lowercase()),
                 None => false,
             }
         } else {
@@ -226,7 +246,7 @@ fn main() {
             ComparisonCommand::Equal => rating == cli.threshold,
         };
 
-        let mut should_move = pass_treshold_check && pass_label_check && pass_ignore_label_check;
+        let mut should_move = pass_treshold_check && pass_label_check && pass_ignore_label_check && pass_include_label_check;
 
         if cli.inverse {
             should_move = !should_move;
@@ -536,7 +556,7 @@ fn get_tags(filename: PathBuf) -> Result<Option<Vec<String>>, String> {
         Ok(meta) => {
             let tags = meta.get_tag_multiple_strings("Xmp.digiKam.TagsList");
             match tags {
-                Ok(tags) => Ok(Some(tags)),
+                Ok(tags) => Ok(Some(tags.iter().map(|t| t.to_lowercase()).collect())),
                 Err(_) => Ok(None),
             }
         }
