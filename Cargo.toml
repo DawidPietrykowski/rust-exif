@@ -10,6 +10,7 @@ path = "src/main.rs"
 [dependencies]
 anyhow = "1.0.86"
 clap = { version = "4.4.4", features = ["derive"] }
+exiftool = "0.3.0"
 kamadak-exif = "0.5.5"
 rexiv2 = "0.10.0"
 xmp_toolkit = "1.8.1"

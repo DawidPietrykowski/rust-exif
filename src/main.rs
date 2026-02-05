@@ -1,3 +1,5 @@
+#![feature(trim_prefix_suffix)]
+
 use crate::xmp::read_rating_xmp;
 use anyhow::{anyhow, Result};
 use clap::{Parser, Subcommand, ValueEnum};
@@ -34,6 +36,9 @@ struct Cli {
 
     #[arg(short = 's', long)]
     src: std::path::PathBuf,
+
+    #[arg(long)]
+    raw_src: Option<std::path::PathBuf>,
 
     #[arg(short = 'e', long)]
     exclude: Vec<String>,
@@ -186,6 +191,8 @@ fn main() {
         cli.flip_exclusion,
         cli.include_videos,
         cli.match_raws,
+        cli.raw_src.as_ref(),
+        search_path.as_ref(),
         cli.verbose,
     )
     .expect("Failed to iterate over directories");
@@ -482,6 +489,8 @@ fn visit_dirs(
     flip_exclusion: bool,
     include_videos: bool,
     raws_matched: bool,
+    raw_path: Option<&PathBuf>,
+    search_dir: &Path,
     verbose: bool,
 ) -> io::Result<()> {
     if dir.is_dir() {
@@ -512,13 +521,39 @@ fn visit_dirs(
                         flip_exclusion,
                         include_videos,
                         raws_matched,
+                        raw_path,
+                        search_dir,
                         verbose,
                     )?;
                 }
             } else {
                 let path_buf = entry.path();
                 if is_file_allowed(&path_buf, include_videos) {
-                    let raw_file_path = path_buf.with_extension("ARW");
+                    let raw_file_path = match raw_path {
+                        Some(raw_base_path) => {
+                            // Calculate new relative path within raw directory
+                            let relative_path = path_buf
+                                .strip_prefix(search_dir)
+                                .expect(
+                                    format!("Failed to strip root prefix of file {:?}", path)
+                                        .as_str(),
+                                );
+
+                            let new_file_path = raw_base_path.join(&relative_path);
+                            let dir_path: &Path = new_file_path.parent().unwrap();
+
+                            let mut file_stem = path_buf
+                                .file_stem()
+                                .unwrap()
+                                .to_string_lossy()
+                                .trim_suffix("_c")
+                                .to_string();
+
+                            file_stem.push_str(".ARW");
+                            dir_path.join(file_stem)
+                        }
+                        None => path_buf.with_extension("ARW"),
+                    };
                     if raws_matched && raw_file_path.exists() {
                         if verbose {
                             eprintln!("Matched raw file {raw_file_path:?}");
