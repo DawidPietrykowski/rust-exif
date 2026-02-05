@@ -1,6 +1,7 @@
 use crate::xmp::read_rating_xmp;
 use anyhow::{anyhow, Result};
 use clap::{Parser, Subcommand, ValueEnum};
+use exiftool::{ExifTool, ExifToolError};
 use rexiv2::Metadata;
 use std::ffi::OsStr;
 use std::fmt::{Display, Formatter};
@@ -73,6 +74,7 @@ enum FileCommand {
     Print,
     DeleteRaws,
     CopyRaws,
+    CopyRatingToRaws,
 }
 
 impl Display for ComparisonCommand {
@@ -136,6 +138,7 @@ fn main() {
         FileCommand::Print => "Printing",
         FileCommand::DeleteRaws => "Deleting raw file",
         FileCommand::CopyRaws => "Copying raw file",
+        FileCommand::CopyRatingToRaws => "Copying rating to raw file",
     };
 
     let search_path = cli.src;
@@ -143,6 +146,19 @@ fn main() {
     assert!(search_path.is_dir(), "Source path must be a directory");
 
     let output_path: Option<PathBuf> = cli.dest;
+
+    if [
+        FileCommand::DeleteRaws,
+        FileCommand::CopyRaws,
+        FileCommand::CopyRatingToRaws,
+    ]
+    .contains(&cli.command)
+    {
+        assert!(
+            cli.match_raws,
+            "Raw file operation requires match_raws option (-m)"
+        );
+    }
 
     let requires_destination = cli.command == FileCommand::Move
         || cli.command == FileCommand::Copy
@@ -246,7 +262,10 @@ fn main() {
             ComparisonCommand::Equal => rating == cli.threshold,
         };
 
-        let mut should_move = pass_treshold_check && pass_label_check && pass_ignore_label_check && pass_include_label_check;
+        let mut should_move = pass_treshold_check
+            && pass_label_check
+            && pass_ignore_label_check
+            && pass_include_label_check;
 
         if cli.inverse {
             should_move = !should_move;
@@ -277,7 +296,7 @@ fn main() {
                 path.clone(),
                 dest_dir,
                 cli.dry_run,
-                cli.r#override
+                cli.r#override,
             );
         }
     }
@@ -341,6 +360,11 @@ fn apply_command(
                     .unwrap()
                     .join(raw_path.file_name().unwrap());
                 copy_file(raw_path, new_file_path, dry_run, override_file, verbose);
+            }
+        }
+        FileCommand::CopyRatingToRaws => {
+            if let Some(raw_path) = path.raw_path {
+                copy_rating(path.path, raw_path, dry_run, override_file, verbose);
             }
         }
     }
@@ -416,6 +440,36 @@ fn copy_file<P: AsRef<Path>>(path: P, dest: P, dry_run: bool, override_file: boo
         }
         false => {
             fs::copy(path, dest).unwrap();
+        }
+    }
+}
+
+fn copy_rating(path: PathBuf, dest: PathBuf, dry_run: bool, override_file: bool, verbose: bool) {
+    let rating = match get_rating(path.clone()) {
+        Ok(rating) => rating,
+        Err(_) => {
+            if !override_file {
+                if verbose {
+                    eprintln!("Skipping {:?} as {:?} does not have rating", path, dest);
+                }
+                return;
+            } else {
+                if verbose {
+                    eprintln!("Removing rating from {:?}", dest);
+                }
+                0
+            }
+        }
+    };
+    if verbose {
+        eprintln!("cp rating: {} {:?} -> {:?}", rating, path, dest);
+    }
+    match dry_run {
+        true => {
+            println!("cp rating: {} {:?} -> {:?}", rating, path, dest);
+        }
+        false => {
+            set_rating(dest, rating).unwrap();
         }
     }
 }
@@ -516,6 +570,11 @@ fn get_rating(filename: PathBuf) -> Result<i32> {
         }
         Err(e) => anyhow::bail!(e),
     }
+}
+
+fn set_rating(path: PathBuf, rating: i32) -> Result<(), ExifToolError> {
+    let mut exiftool = ExifTool::new().unwrap();
+    exiftool.write_tag(path.as_path(), "Rating", &rating, &["-overwrite_original"])
 }
 
 fn is_video(path: &Path) -> bool {
